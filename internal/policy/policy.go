@@ -22,10 +22,10 @@ func New(hosts []string, ports []int) *Policy {
 }
 
 func (p *Policy) Allow(host string, port int) bool {
-	if len(p.allowedPorts) > 0 && !p.allowedPorts[port] {
+	if len(p.allowedHosts) > 0 && !p.allowedHosts[normalize(host)] {
 		return false
 	}
-	if len(p.allowedHosts) > 0 && !p.allowedHosts[normalize(host)] {
+	if len(p.allowedPorts) > 0 && !p.allowedPorts[port] {
 		return false
 	}
 	return true

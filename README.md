@@ -1,37 +1,40 @@
 # proxy-mvp
 
-This repository contains the v0.3 milestone: the gateway keeps the same auth/policy/node-safety gates as v0.2, but now adds a controlled relay path to a local operator-owned test environment.
+This repository contains the v0.3 local relay milestone.
 
-The relay is intentionally restrictively scoped:
+Scope is intentionally limited to a single owned test exit node and a local allowlisted target.
 
-- one explicit exit node
-- local test target only
-- local egress service required
-- no arbitrary public proxying
-- no peer residential/mobile network
-- no customer billing or dashboard
+## What it includes
 
-## Components
-
-- `cmd/gateway` — authenticated gateway with policy and node checks
-- `cmd/egress` — local operator-controlled relay endpoint on `:9443`
-- `cmd/target` — local echo target on `:9444` for controlled testing
+- `/health` endpoint
+- Basic authentication
+- CONNECT-only policy
+- allowlisted host/port restriction
+- exit-node registry
+- authorized/healthy/enabled checks
+- per-user connection limit
+- metadata-only audit logging
+- local relay to a controlled test egress node
+- Docker support for quick local validation
 
 ## Local validation
 
-Start the controlled test environment:
+Start target:
 
 ```bash
-go run ./cmd/target &
-go run ./cmd/egress &
+go run ./cmd/target
 ```
 
-Then start the gateway:
+Start egress:
 
 ```bash
-PROXY_USER=dev \
-PROXY_PASSWORD=secret \
-go run ./cmd/gateway
+go run ./cmd/egress
+```
+
+Start gateway:
+
+```bash
+PROXY_USER=dev PROXY_PASSWORD=secret go run ./cmd/gateway
 ```
 
 Health check:
@@ -40,15 +43,13 @@ Health check:
 curl http://localhost:8080/health
 ```
 
-Test the local controlled relay:
+Proxy through the controlled local path:
 
 ```bash
-curl \
-  -x http://dev:secret@localhost:8080 \
-  http://localhost:9444
+curl --proxy-user dev:secret -x http://localhost:8080 http://localhost:9444
 ```
 
-If the tunnel is working, the body should echo back through the gateway and the local egress path.
+This should relay traffic only through the single controlled local exit node.
 
 ## Docker
 
@@ -56,13 +57,6 @@ If the tunnel is working, the body should echo back through the gateway and the 
 docker compose up --build
 ```
 
-## Definition of done
+## Important guardrail
 
-This milestone proves the following sequence:
-
-- auth passes
-- policy passes
-- node eligibility passes
-- relay to a single controlled local exit node passes
-- byte traffic is observed through the tunnel
-- the relay is still restricted to an explicit, operator-controlled path
+This is not a public residential/mobile proxy platform. It is a local, explicit, authorized relay primitive for testing and governance before broader expansion.

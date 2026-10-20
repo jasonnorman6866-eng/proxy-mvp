@@ -6,10 +6,7 @@ import (
 	"strings"
 )
 
-func IsAuthorized(r *http.Request, enabled bool, username, password string) bool {
-	if !enabled {
-		return true
-	}
+func IsAuthorized(r *http.Request, username, password string) bool {
 	if username == "" || password == "" {
 		return false
 	}
@@ -17,9 +14,6 @@ func IsAuthorized(r *http.Request, enabled bool, username, password string) bool
 	header := r.Header.Get("Proxy-Authorization")
 	if header == "" {
 		header = r.Header.Get("Authorization")
-	}
-	if header == "" {
-		return false
 	}
 	if !strings.HasPrefix(header, "Basic ") {
 		return false
@@ -29,9 +23,9 @@ func IsAuthorized(r *http.Request, enabled bool, username, password string) bool
 	if err != nil {
 		return false
 	}
-	parts := strings.SplitN(string(decoded), ":", 2)
-	if len(parts) != 2 {
+	user, pass, ok := strings.Cut(string(decoded), ":")
+	if !ok {
 		return false
 	}
-	return parts[0] == username && parts[1] == password
+	return user == username && pass == password
 }

@@ -1,20 +1,30 @@
 gateway:
   listen: ":8080"
+  health_path: "/health"
 
 auth:
   enabled: true
-  username: "demo"
-  password: "demo"
+  username: "dev"
+  password: "secret"
 
 policy:
+  allowed_hosts:
+    - "localhost"
+    - "127.0.0.1"
   allowed_ports:
-    - 443
+    - 9444
 
-egress:
-  enabled: true
+nodes:
+  - id: "dev-node-01"
+    address: "127.0.0.1:9443"
+    authorized: true
+    healthy: true
+    disabled: false
 
 limits:
   max_connections_per_user: 5
+  read_timeout_seconds: 10
+  write_timeout_seconds: 10
 
 audit:
   enabled: true

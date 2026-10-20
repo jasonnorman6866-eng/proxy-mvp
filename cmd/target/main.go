@@ -14,11 +14,11 @@ func main() {
 		log.Fatalf("listen target: %v", err)
 	}
 	defer ln.Close()
-	log.Printf("test target listening on %s", listenAddr)
+	log.Printf("local target listening on %s", listenAddr)
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			log.Printf("accept err: %v", err)
+			log.Printf("accept error: %v", err)
 			continue
 		}
 		go handleConn(conn)
@@ -31,9 +31,7 @@ func handleConn(conn net.Conn) {
 	for {
 		n, err := conn.Read(buf)
 		if n > 0 {
-			if _, werr := conn.Write([]byte(fmt.Sprintf("echo:%s", string(buf[:n])))); werr != nil {
-				return
-			}
+			_, _ = conn.Write([]byte(fmt.Sprintf("echo:%s", string(buf[:n]))))
 		}
 		if err != nil {
 			return
@@ -41,8 +39,8 @@ func handleConn(conn net.Conn) {
 	}
 }
 
-func env(name, fallback string) string {
-	if value := os.Getenv(name); value != "" {
+func env(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
 		return value
 	}
 	return fallback
