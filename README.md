@@ -1,74 +1,59 @@
 # proxy-mvp
 
-This repository is the first small, controlled Gateway v0.1 milestone for a legitimate single-node egress path.
+This repository is the first controlled milestone for a local, allowlisted Gateway v0.1.
 
-The build is intentionally narrow:
+It intentionally proves the authorization and policy gates before enabling a real egress tunnel.
 
-- Go `net/http` server
-- authenticated CONNECT proxy
-- deny/allow policy for destination ports
-- explicit egress enablement
-- user-level connection cap
-- rate limiting and usage tracking
-- audit logging for metadata only
-- no payload capture
-- /health endpoint
+## What this version does
 
-## Project structure
-
-```text
-proxy-mvp/
-├── cmd/
-│   └── gateway/
-│       └── main.go
-├── internal/
-│   ├── audit/
-│   │   └── audit.go
-│   ├── auth/
-│   │   └── auth.go
-│   ├── meter/
-│   │   └── meter.go
-│   ├── policy/
-│   │   └── policy.go
-│   └── proxy/
-│       └── connect.go
-├── config/
-│   └── config.yaml
-├── Dockerfile
-├── docker-compose.yml
-├── go.mod
-├── README.md
-└── .gitignore
-```
+- `/health` endpoint
+- Basic auth for proxy requests
+- CONNECT-only handling
+- allowlist for `example.com`
+- port restriction to `443`
+- deny unauthorized destinations
+- explicit `501 Not Implemented` while the relay is intentionally disabled
 
 ## Run locally
 
 ```bash
+PROXY_USER=dev \
+PROXY_PASSWORD=test-password \
 go run ./cmd/gateway
 ```
 
-Check health:
+Health check:
 
 ```bash
 curl http://localhost:8080/health
 ```
 
-Expected response:
-
-```json
-{"status":"ok"}
-```
-
-Proxy test:
+Authenticated proxy test:
 
 ```bash
-curl --proxy-user demo:demo -x http://localhost:8080 https://example.com -I
+curl \
+  -x http://dev:test-password@localhost:8080 \
+  https://example.com
 ```
 
-## Notes
+This should authenticate and authorize the destination, but stop before the actual TCP relay is enabled.
 
-This milestone intentionally keeps routing and egress to a known, authorized, operator-controlled path only. It does not support residential SDK networks, peer rotation, or carrier impersonation.
+Unauthorized destination example:
 
-## Definition of done
+```bash
+curl \
+  -x http://dev:test-password@localhost:8080 \
+  https://www.google.com
+```
 
-The service should authenticate, enforce the restrictive port policy, relay the CONNECT tunnel, and emit metadata events without logging payloads or TLS contents.
+This should be rejected.
+
+## Why this is the right first checkpoint
+
+This keeps the initial build narrow and safe:
+- no arbitrary residential/mobile network
+- no open proxy behavior
+- no real egress routing yet
+- explicit allowlist and deny states
+
+The next checkpoint is an operator-controlled exit-node registry with health + kill switch + relay path.

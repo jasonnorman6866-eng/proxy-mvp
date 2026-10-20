@@ -1,117 +1,176 @@
 package main
 
 import (
-	"fmt"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/json"
 	"log"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
+	"testing"
 	"time"
-
-	"gopkg.in/yaml.v3"
-
-	"proxy-mvp/internal/audit"
-	"proxy-mvp/internal/auth"
-	"proxy-mvp/internal/meter"
-	"proxy-mvp/internal/policy"
-	"proxy-mvp/internal/proxy"
 )
 
-type Config struct {
-	Gateway struct {
-		Listen string `yaml:"listen"`
-	} `yaml:"gateway"`
-	Auth struct {
-		Enabled  bool   `yaml:"enabled"`
-		Username string `yaml:"username"`
-		Password string `yaml:"password"`
-	} `yaml:"auth"`
-	Policy struct {
-		AllowedPorts []int `yaml:"allowed_ports"`
-	} `yaml:"policy"`
-	Egress struct {
-		Enabled bool `yaml:"enabled"`
-	} `yaml:"egress"`
-	Limits struct {
-		MaxConnectionsPerUser int `yaml:"max_connections_per_user"`
-	} `yaml:"limits"`
-	Audit struct {
-		Enabled     bool `yaml:"enabled"`
-		LogPayloads bool `yaml:"log_payloads"`
-	} `yaml:"audit"`
+type Gateway struct {
+	username string
+	password string
+	allowedHosts map[string]bool
 }
 
-func loadConfig(path string) (Config, error) {
-	cfg := Config{}
-	if path == "" {
-		path = "config/config.yaml"
+func newGateway() *Gateway {
+	return &Gateway{
+		username: env("PROXY_USER", "dev"),
+		password: env("PROXY_PASSWORD", "change-me"),
+		allowedHosts: map[string]bool{
+			"example.com": true,
+		},
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return cfg, err
+}
+
+func TestHealthEndpoint(t *testing.T) {
+	g := newGateway()
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+	mux.Handle("/", g)
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return cfg, err
+	if !strings.Contains(w.Body.String(), `"status":"ok"`) {
+		t.Fatalf("unexpected health body: %s", w.Body.String())
 	}
-	if cfg.Gateway.Listen == "" {
-		cfg.Gateway.Listen = ":8080"
+}
+
+func TestCONNECTAuthorizedDestination(t *testing.T) {
+	g := newGateway()
+	req := httptest.NewRequest(http.MethodConnect, "https://example.com:443", nil)
+	req.Host = "example.com:443"
+	req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("dev:change-me")))
+	w := httptest.NewRecorder()
+	g.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotImplemented {
+		t.Fatalf("expected 501 for relay not enabled, got %d", w.Code)
 	}
-	if cfg.Auth.Username == "" {
-		cfg.Auth.Username = "demo"
+	if !strings.Contains(w.Body.String(), "relay not enabled") {
+		t.Fatalf("unexpected body: %s", w.Body.String())
 	}
-	if cfg.Auth.Password == "" {
-		cfg.Auth.Password = "demo"
+}
+
+func TestCONNECTRejectsUnauthorizedHost(t *testing.T) {
+	g := newGateway()
+	req := httptest.NewRequest(http.MethodConnect, "https://www.google.com:443", nil)
+	req.Host = "www.google.com:443"
+	req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("dev:change-me")))
+	w := httptest.NewRecorder()
+	g.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
 	}
-	if len(cfg.Policy.AllowedPorts) == 0 {
-		cfg.Policy.AllowedPorts = []int{443}
+}
+
+func TestCONNECTRejectsIncorrectAuth(t *testing.T) {
+	g := newGateway()
+	req := httptest.NewRequest(http.MethodConnect, "https://example.com:443", nil)
+	req.Host = "example.com:443"
+	req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("dev:wrong")))
+	w := httptest.NewRecorder()
+	g.ServeHTTP(w, req)
+
+	if w.Code != http.StatusProxyAuthRequired {
+		t.Fatalf("expected 407, got %d", w.Code)
 	}
-	if cfg.Limits.MaxConnectionsPerUser == 0 {
-		cfg.Limits.MaxConnectionsPerUser = 5
-	}
-	return cfg, nil
 }
 
 func main() {
-	cfg, err := loadConfig(os.Getenv("GATEWAY_CONFIG"))
-	if err != nil {
-		log.Fatalf("load config: %v", err)
-	}
-
-	pol := policy.New(cfg.Policy.AllowedPorts)
-	met := meter.New()
-	logger := audit.New(cfg.Audit.Enabled, cfg.Audit.LogPayloads)
-	srv := &proxy.Server{
-		AuthEnabled:             cfg.Auth.Enabled,
-		Username:                cfg.Auth.Username,
-		Password:                cfg.Auth.Password,
-		Policy:                  pol,
-		Meter:                   met,
-		Logger:                  logger,
-		EgressEnabled:           cfg.Egress.Enabled,
-		MaxConnectionsPerUser:   cfg.Limits.MaxConnectionsPerUser,
-		MaxConnectionsPerHandle: 5,
-	}
-
+	g := newGateway()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"status":"ok"}`)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
-	mux.Handle("/", srv)
+	mux.Handle("/", g)
 
-	log.Printf("gateway listening on %s", cfg.Gateway.Listen)
 	server := &http.Server{
-		Addr:              cfg.Gateway.Listen,
+		Addr:              ":8080",
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      0,
-		IdleTimeout:       0,
+		IdleTimeout:       30 * time.Second,
+		MaxHeaderBytes:    16 << 10,
 	}
-	if err := server.ListenAndServe(); err != nil && !strings.Contains(err.Error(), "use of closed network connection") {
-		log.Fatalf("serve gateway: %v", err)
+
+	log.Println("gateway listening on :8080")
+	log.Fatal(server.ListenAndServe())
+}
+
+func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !g.authenticate(r) {
+		w.Header().Set("Proxy-Authenticate", `Basic realm="proxy-mvp"`)
+		http.Error(w, "proxy authentication required", http.StatusProxyAuthRequired)
+		return
 	}
+
+	if r.Method != http.MethodConnect {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	host, port, err := net.SplitHostPort(r.Host)
+	if err != nil {
+		http.Error(w, "invalid destination", http.StatusBadRequest)
+		return
+	}
+
+	if port != "443" {
+		http.Error(w, "destination port denied", http.StatusForbidden)
+		return
+	}
+
+	if !g.allowedHosts[strings.ToLower(host)] {
+		http.Error(w, "destination denied", http.StatusForbidden)
+		log.Printf("audit action=deny host=%q port=%q remote=%q", host, port, r.RemoteAddr)
+		return
+	}
+
+	http.Error(w, "destination authorized; relay not enabled in gateway v0.1", http.StatusNotImplemented)
+	log.Printf("audit action=authorized host=%q port=%q remote=%q", host, port, r.RemoteAddr)
+}
+
+func (g *Gateway) authenticate(r *http.Request) bool {
+	value := r.Header.Get("Proxy-Authorization")
+	const prefix = "Basic "
+	if !strings.HasPrefix(value, prefix) {
+		return false
+	}
+
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(value, prefix))
+	if err != nil {
+		return false
+	}
+
+	user, pass, ok := strings.Cut(string(raw), ":")
+	if !ok {
+		return false
+	}
+
+	userOK := subtle.ConstantTimeCompare([]byte(user), []byte(g.username))
+	passOK := subtle.ConstantTimeCompare([]byte(pass), []byte(g.password))
+	return userOK == 1 && passOK == 1
+}
+
+func env(name, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
 }
