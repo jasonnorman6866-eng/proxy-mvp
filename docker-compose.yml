@@ -1,0 +1,29 @@
+services:
+  node:
+    build:
+      context: .
+      dockerfile: Dockerfile.node
+    environment:
+      NODE_LISTEN_ADDR: ":9001"
+      NODE_ALLOWED_HOSTS: "example.com"
+    ports:
+      - "9001:9001"
+
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    environment:
+      GATEWAY_LISTEN_ADDR: ":8080"
+      GATEWAY_USERNAME: "demo"
+      GATEWAY_PASSWORD: "demo"
+      GATEWAY_EXIT_NODE_HOST: "node"
+      GATEWAY_EXIT_NODE_PORT: "9001"
+      GATEWAY_ALLOWED_HOSTS: "example.com"
+      GATEWAY_ALLOWED_PORTS: "443"
+      GATEWAY_RATE_LIMIT: "60"
+      GATEWAY_RATE_BURST: "30"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - node

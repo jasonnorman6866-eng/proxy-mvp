@@ -1,0 +1,12 @@
+FROM golang:1.22-alpine AS builder
+
+WORKDIR /src
+COPY go.mod .
+COPY cmd ./cmd
+COPY internal ./internal
+RUN go build -o /bin/node ./cmd/node
+
+FROM alpine:3.20
+COPY --from=builder /bin/node /bin/node
+EXPOSE 9001
+ENTRYPOINT ["/bin/node"]
