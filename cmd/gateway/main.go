@@ -1,28 +1,36 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
-	"time"
 
 	"proxy-mvp/internal/config"
 	"proxy-mvp/internal/proxy"
 )
 
 func main() {
-	cfg := config.Load()
-	p := proxy.New(cfg)
-
-	server := &http.Server{
-		Addr:              cfg.ListenAddr,
-		Handler:           p,
-		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      0,
-		ReadTimeout:       0,
-		IdleTimeout:       0,
+	cfg, err := config.Load("config/config.yaml")
+	if err != nil {
+		log.Fatalf("load config: %v", err)
 	}
 
-	log.Printf("gateway listening on %s", cfg.ListenAddr)
-	log.Printf("auth user=%s exit node=%s:%d allowed hosts=%v allowed ports=%v", cfg.BasicUser, cfg.ExitNodeHost, cfg.ExitNodePort, cfg.AllowedHosts, cfg.AllowedPorts)
-	log.Fatal(server.ListenAndServe())
+	handler := proxy.New(cfg)
+	mux := http.NewServeMux()
+	mux.HandleFunc(cfg.Gateway.HealthPath, func(w http.ResponseWriter, r *http.Request) {
+		handler.ServeHTTP(w, r)
+	})
+	mux.Handle("/", handler)
+
+	server := &http.Server{
+		Addr:    cfg.Gateway.Listen,
+		Handler: mux,
+	}
+
+	log.Printf("gateway listening on %s", cfg.Gateway.Listen)
+	log.Printf("exit node: %s:%d authorized=%t healthy=%t kill_switch=%t", cfg.ExitNode.Host, cfg.ExitNode.Port, cfg.ExitNode.Authorized, cfg.ExitNode.Healthy, cfg.ExitNode.KillSwitch)
+
+	if err := server.ListenAndServe(); err != nil {
+		fmt.Println(err)
+	}
 }

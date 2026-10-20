@@ -1,51 +1,79 @@
 # proxy-mvp
 
-This is a minimal, audited, explicit-node proxy gateway that proves the path:
+This repository is the first small, controlled gateway proof of concept for a legitimate single-node egress path.
 
-client -> authenticated gateway -> one authorized exit node -> public site
+It intentionally does not include residential SDK networks, billing, dashboards, or carrier rotation.
 
-This is intentionally not a commercial or residential-proxy platform. It is a tiny proof of concept.
+## Scope
 
-## What it does
+The MVP proves this path:
+
+```text
+Client
+  ↓
+Go Gateway :8080
+  ↓
+Authentication
+  ↓
+Policy check
+  ↓
+Authorized exit node
+  ↓
+Public destination
+```
+
+## Included
 
 - HTTP CONNECT proxying
 - Basic authentication
-- Single configured exit node
-- Destination and port restrictions
+- Restrictive destination and port policy
+- One configured exit node
 - Rate limiting
-- Connection/bandwidth counting
-- Audit logging to stdout
-- Kill switch via environment variable
+- Bandwidth tracking
+- Audit logging without payload capture
+- /health endpoint
+- kill switch flag
+
+## Project structure
+
+```text
+proxy-mvp/
+├── cmd/
+│   └── gateway/
+│       └── main.go
+├── internal/
+│   ├── audit/
+│   ├── auth/
+│   ├── config/
+│   ├── meter/
+│   ├── policy/
+│   └── proxy/
+├── config/
+│   └── config.yaml
+├── Dockerfile
+├── docker-compose.yml
+├── go.mod
+├── README.md
+└── .gitignore
+```
 
 ## Run locally
 
-Start the exit node:
-
 ```bash
-go run ./cmd/node
-```
-
-Start the gateway:
-
-```bash
-GATEWAY_USERNAME=demo \
-GATEWAY_PASSWORD=demo \
-GATEWAY_EXIT_NODE_HOST=127.0.0.1 \
-GATEWAY_EXIT_NODE_PORT=9001 \
-GATEWAY_ALLOWED_HOSTS=example.com \
-GATEWAY_ALLOWED_PORTS=443 \
-GATEWAY_RATE_LIMIT=60 \
-GATEWAY_RATE_BURST=30 \
 go run ./cmd/gateway
 ```
 
-Test:
+Then test with:
 
 ```bash
 curl --proxy-user demo:demo -x http://localhost:8080 https://example.com -I
 ```
 
-If the tunnel works, the HTTP response should come back from `example.com`.
+Check health:
+
+```bash
+curl http://localhost:8080/health
+```
 
 ## Docker
 
@@ -53,18 +81,10 @@ If the tunnel works, the HTTP response should come back from `example.com`.
 docker compose up --build
 ```
 
-Then:
+## Governance notes
 
-```bash
-curl --proxy-user demo:demo -x http://localhost:8080 https://example.com -I
-```
+This gateway assumes a single known, authorized egress point and a strict allow list. It does not impersonate carriers, rotate IPs, or rely on arbitrary residential traffic.
 
-## Governance note
+## Definition of done
 
-This MVP assumes:
-- explicit owner/authorized use
-- one controlled exit node
-- no peer-to-peer SDK or arbitrary residential network
-- explicit destination restrictions and audit logging
-
-This keeps the initial architecture aligned with consent and abuse controls.
+This repo proves the minimal foundation required before expanding into PostgreSQL, node registry, and routing.

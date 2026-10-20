@@ -1,127 +1,101 @@
 package config
 
 import (
+	"fmt"
 	"os"
-	"strconv"
-	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	ListenAddr      string
-	BasicUser       string
-	BasicPassword   string
-	ExitNodeHost    string
-	ExitNodePort    int
-	AllowedHosts    []string
-	AllowedPorts    []int
-	RateLimit       int
-	RateBurst       int
-	KillSwitch      bool
-	AuthorizationOK bool
+	Gateway  Gateway  `yaml:"gateway"`
+	ExitNode ExitNode `yaml:"exit_node"`
+	Policy   Policy   `yaml:"policy"`
+	Meter    Meter    `yaml:"meter"`
+	Audit    Audit    `yaml:"audit"`
 }
 
-func Load() Config {
-	return Config{
-		ListenAddr:      getEnv("GATEWAY_LISTEN_ADDR", ":8080"),
-		BasicUser:       getEnv("GATEWAY_USERNAME", "demo"),
-		BasicPassword:   getEnv("GATEWAY_PASSWORD", "demo"),
-		ExitNodeHost:    getEnv("GATEWAY_EXIT_NODE_HOST", "127.0.0.1"),
-		ExitNodePort:    getEnvInt("GATEWAY_EXIT_NODE_PORT", 9001),
-		AllowedHosts:    csvToSlice(getEnv("GATEWAY_ALLOWED_HOSTS", "example.com")),
-		AllowedPorts:    intsFromCSV(getEnv("GATEWAY_ALLOWED_PORTS", "443")),
-		RateLimit:       getEnvInt("GATEWAY_RATE_LIMIT", 60),
-		RateBurst:       getEnvInt("GATEWAY_RATE_BURST", 30),
-		KillSwitch:      getEnvBool("GATEWAY_KILL_SWITCH", false),
-		AuthorizationOK: true,
-	}
+type Gateway struct {
+	Listen     string `yaml:"listen"`
+	Username   string `yaml:"username"`
+	Password   string `yaml:"password"`
+	HealthPath string `yaml:"health_path"`
 }
 
-func (c Config) IsAllowedDestination(host string, port int) bool {
-	host = normalizeHost(host)
-	if len(c.AllowedHosts) == 0 {
-		return true
-	}
-	for _, allowed := range c.AllowedHosts {
-		if normalizeHost(allowed) == host {
-			return containsPort(c.AllowedPorts, port)
-		}
-	}
-	return false
+type ExitNode struct {
+	Host       string `yaml:"host"`
+	Port       int    `yaml:"port"`
+	Label      string `yaml:"label"`
+	Authorized bool   `yaml:"authorized"`
+	Healthy    bool   `yaml:"healthy"`
+	KillSwitch bool   `yaml:"kill_switch"`
 }
 
-func normalizeHost(host string) string {
-	return strings.TrimSpace(strings.TrimSuffix(strings.ToLower(host), "."))
+type Policy struct {
+	AllowedHosts []string `yaml:"allowed_hosts"`
+	AllowedPorts []int    `yaml:"allowed_ports"`
 }
 
-func containsPort(ports []int, port int) bool {
-	if len(ports) == 0 {
-		return true
-	}
-	for _, candidate := range ports {
-		if candidate == port {
-			return true
-		}
-	}
-	return false
+type Meter struct {
+	LimitPerMinute int `yaml:"limit_per_minute"`
+	Burst          int `yaml:"burst"`
 }
 
-func csvToSlice(value string) []string {
-	if value == "" {
-		return nil
-	}
-	parts := strings.Split(value, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
+type Audit struct {
+	Enabled bool `yaml:"enabled"`
 }
 
-func intsFromCSV(value string) []int {
-	if value == "" {
-		return nil
+func Load(path string) (*Config, error) {
+	if path == "" {
+		path = "config/config.yaml"
 	}
-	parts := strings.Split(value, ",")
-	out := make([]int, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		i, err := strconv.Atoi(p)
-		if err == nil {
-			out = append(out, i)
-		}
-	}
-	return out
-}
 
-func getEnv(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read config: %w", err)
 	}
-	return fallback
-}
 
-func getEnvInt(key string, fallback int) int {
-	if value := os.Getenv(key); value != "" {
-		i, err := strconv.Atoi(value)
-		if err == nil {
-			return i
-		}
+	cfg := &Config{}
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("parse config: %w", err)
 	}
-	return fallback
-}
 
-func getEnvBool(key string, fallback bool) bool {
-	if value := os.Getenv(key); value != "" {
-		b, err := strconv.ParseBool(value)
-		if err == nil {
-			return b
-		}
+	if cfg.Gateway.Listen == "" {
+		cfg.Gateway.Listen = ":8080"
 	}
-	return fallback
+	if cfg.Gateway.HealthPath == "" {
+		cfg.Gateway.HealthPath = "/health"
+	}
+	if cfg.Gateway.Username == "" {
+		cfg.Gateway.Username = "demo"
+	}
+	if cfg.Gateway.Password == "" {
+		cfg.Gateway.Password = "demo"
+	}
+	if cfg.ExitNode.Host == "" {
+		cfg.ExitNode.Host = "example.com"
+	}
+	if cfg.ExitNode.Port == 0 {
+		cfg.ExitNode.Port = 443
+	}
+	if cfg.ExitNode.Label == "" {
+		cfg.ExitNode.Label = "authorized-test-egress"
+	}
+	if cfg.ExitNode.Authorized == false && cfg.ExitNode.Healthy == false {
+		cfg.ExitNode.Authorized = true
+		cfg.ExitNode.Healthy = true
+	}
+	if len(cfg.Policy.AllowedHosts) == 0 {
+		cfg.Policy.AllowedHosts = []string{"example.com"}
+	}
+	if len(cfg.Policy.AllowedPorts) == 0 {
+		cfg.Policy.AllowedPorts = []int{80, 443}
+	}
+	if cfg.Meter.LimitPerMinute <= 0 {
+		cfg.Meter.LimitPerMinute = 60
+	}
+	if cfg.Meter.Burst <= 0 {
+		cfg.Meter.Burst = 30
+	}
+	return cfg, nil
 }
