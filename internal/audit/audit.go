@@ -25,5 +25,5 @@ func (l *Logger) Log(fields map[string]any) {
 	if err != nil {
 		return
 	}
-	log.Printf("%s", b)
+	log.Printf("%s", string(b))
 }

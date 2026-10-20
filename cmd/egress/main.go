@@ -84,11 +84,7 @@ func handleConn(conn net.Conn) {
 	relay(upstream, conn)
 }
 
-func relay(dst, src net.Conn) {
-	defer dst.Close()
-	defer src.Close()
-	_, _ = io.Copy(dst, src)
-}
+func relay(dst, src net.Conn) { defer dst.Close(); defer src.Close(); _, _ = io.Copy(dst, src) }
 
 func env(name, fallback string) string {
 	if value := os.Getenv(name); value != "" {

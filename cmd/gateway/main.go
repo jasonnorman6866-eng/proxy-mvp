@@ -5,10 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -123,12 +125,12 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	buf := make([]byte, 32)
-	if _, err := nodeConn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+	buf := make([]byte, 64)
+	if err := nodeConn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		log.Printf("set read deadline: %v", err)
 	}
-	if n, err := nodeConn.Read(buf); err != nil || !strings.Contains(string(buf[:n]), "OK") {
-		log.Printf("exit node handshake failed: n=%d err=%v payload=%q", n, err, string(buf[:n]))
+	if n, readErr := nodeConn.Read(buf); readErr != nil || !strings.Contains(string(buf[:n]), "OK") {
+		log.Printf("exit node handshake failed: n=%d err=%v payload=%q", n, readErr, string(buf[:n]))
 		http.Error(w, "exit node rejected tunnel", http.StatusBadGateway)
 		return
 	}
@@ -164,16 +166,16 @@ func relay(dst, src net.Conn) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_, _ = ioCopy(dst, src)
+		_, _ = copyLoop(dst, src)
 	}()
 	go func() {
 		defer wg.Done()
-		_, _ = ioCopy(src, dst)
+		_, _ = copyLoop(src, dst)
 	}()
 	wg.Wait()
 }
 
-func ioCopy(dst io.Writer, src io.Reader) (int64, error) {
+func copyLoop(dst io.Writer, src io.Reader) (int64, error) {
 	buf := make([]byte, 32*1024)
 	var written int64
 	for {
@@ -186,7 +188,7 @@ func ioCopy(dst io.Writer, src io.Reader) (int64, error) {
 			}
 		}
 		if err != nil {
-			if err.Error() == "use of closed network connection" {
+			if strings.Contains(err.Error(), "use of closed network connection") {
 				return written, nil
 			}
 			return written, err
