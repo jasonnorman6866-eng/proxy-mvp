@@ -1,17 +1,18 @@
 # proxy-mvp
 
-This repository is the first small, controlled gateway proof of concept for a legitimate single-node egress path.
+This repository is the first small, controlled Gateway v0.1 milestone for a legitimate single-node egress path.
 
-The design is intentionally narrow:
+The build is intentionally narrow:
 
-- one configured exit node
-- basic authentication
-- CONNECT tunneling
-- restrictive policy
-- rate limiting
-- usage accounting
-- audit logs without payload capture
-- health endpoint and kill switch
+- Go `net/http` server
+- authenticated CONNECT proxy
+- deny/allow policy for destination ports
+- explicit egress enablement
+- user-level connection cap
+- rate limiting and usage tracking
+- audit logging for metadata only
+- no payload capture
+- /health endpoint
 
 ## Project structure
 
@@ -22,11 +23,15 @@ proxy-mvp/
 │       └── main.go
 ├── internal/
 │   ├── audit/
+│   │   └── audit.go
 │   ├── auth/
-│   ├── config/
+│   │   └── auth.go
 │   ├── meter/
+│   │   └── meter.go
 │   ├── policy/
+│   │   └── policy.go
 │   └── proxy/
+│       └── connect.go
 ├── config/
 │   └── config.yaml
 ├── Dockerfile
@@ -42,26 +47,28 @@ proxy-mvp/
 go run ./cmd/gateway
 ```
 
-Then verify:
-
-```bash
-curl --proxy-user demo:demo -x http://localhost:8080 https://example.com -I
-```
-
-Health check:
+Check health:
 
 ```bash
 curl http://localhost:8080/health
 ```
 
-## Containerized
+Expected response:
 
-```bash
-docker compose up --build
+```json
+{"status":"ok"}
 ```
 
-## Governance note
+Proxy test:
 
-This is the first controlled primitive: a gateway with a single authorized egress path, explicit deny/allow boundaries, and logging that tracks metadata and bytes transferred without encoding or capturing payload contents.
+```bash
+curl --proxy-user demo:demo -x http://localhost:8080 https://example.com -I
+```
 
-It does not include residential SDK networks, carrier rotation, billing, or customer dashboards.
+## Notes
+
+This milestone intentionally keeps routing and egress to a known, authorized, operator-controlled path only. It does not support residential SDK networks, peer rotation, or carrier impersonation.
+
+## Definition of done
+
+The service should authenticate, enforce the restrictive port policy, relay the CONNECT tunnel, and emit metadata events without logging payloads or TLS contents.

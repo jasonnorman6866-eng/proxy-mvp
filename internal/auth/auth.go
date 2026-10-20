@@ -6,7 +6,10 @@ import (
 	"strings"
 )
 
-func IsAuthorized(r *http.Request, username, password string) bool {
+func IsAuthorized(r *http.Request, enabled bool, username, password string) bool {
+	if !enabled {
+		return true
+	}
 	if username == "" || password == "" {
 		return false
 	}
@@ -18,21 +21,17 @@ func IsAuthorized(r *http.Request, username, password string) bool {
 	if header == "" {
 		return false
 	}
-
-	const prefix = "Basic "
-	if !strings.HasPrefix(header, prefix) {
+	if !strings.HasPrefix(header, "Basic ") {
 		return false
 	}
 
-	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(header, prefix))
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(header, "Basic "))
 	if err != nil {
 		return false
 	}
-
 	parts := strings.SplitN(string(decoded), ":", 2)
 	if len(parts) != 2 {
 		return false
 	}
-
 	return parts[0] == username && parts[1] == password
 }

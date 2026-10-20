@@ -1,27 +1,21 @@
 gateway:
   listen: ":8080"
+
+auth:
+  enabled: true
   username: "demo"
   password: "demo"
-  health_path: "/health"
-
-exit_node:
-  host: "example.com"
-  port: 443
-  label: "authorized-test-egress"
-  authorized: true
-  healthy: true
-  kill_switch: false
 
 policy:
-  allowed_hosts:
-    - "example.com"
   allowed_ports:
     - 443
-    - 80
 
-meter:
-  rate_limit_per_minute: 60
-  burst: 30
+egress:
+  enabled: true
+
+limits:
+  max_connections_per_user: 5
 
 audit:
   enabled: true
+  log_payloads: false

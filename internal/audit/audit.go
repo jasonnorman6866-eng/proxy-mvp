@@ -4,27 +4,29 @@ import (
 	"encoding/json"
 	"log"
 	"sync"
-	"time"
 )
 
 type Logger struct {
-	enabled bool
-	mu      sync.Mutex
+	enabled     bool
+	logPayloads bool
+	mu          sync.Mutex
 }
 
-func New(enabled bool) *Logger {
-	return &Logger{enabled: enabled}
+func New(enabled bool, logPayloads bool) *Logger {
+	return &Logger{enabled: enabled, logPayloads: logPayloads}
 }
 
-func (l *Logger) Log(event string, fields map[string]any) {
+func (l *Logger) Log(fields map[string]any) {
 	if !l.enabled {
 		return
 	}
-	payload := map[string]any{"ts": time.Now().UTC().Format(time.RFC3339), "event": event}
-	for k, v := range fields {
-		payload[k] = v
+	if !l.logPayloads {
+		delete(fields, "request_body")
+		delete(fields, "response_body")
+		delete(fields, "cookies")
+		delete(fields, "tls")
 	}
-	b, err := json.Marshal(payload)
+	b, err := json.Marshal(fields)
 	if err != nil {
 		return
 	}

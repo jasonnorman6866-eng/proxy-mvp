@@ -2,41 +2,53 @@ package meter
 
 import (
 	"sync"
-
-	"golang.org/x/time/rate"
+	"time"
 )
 
 type Meter struct {
 	mu      sync.Mutex
-	bytes   int64
-	limiter *rate.Limiter
+	counts  map[string]int
+	records map[string]SessionRecord
 }
 
-func New(rateLimitPerMinute, burst int) *Meter {
-	if rateLimitPerMinute <= 0 {
-		rateLimitPerMinute = 60
+type SessionRecord struct {
+	User         string
+	Host         string
+	Port         int
+	BytesUp      int64
+	BytesDown    int64
+	DurationMs   int64
+	EndedAt      time.Time
+}
+
+func New() *Meter {
+	return &Meter{
+		counts:  make(map[string]int),
+		records: make(map[string]SessionRecord),
 	}
-	if burst <= 0 {
-		burst = 30
-	}
-	return &Meter{limiter: rate.NewLimiter(rate.Limit(rateLimitPerMinute/60.0), burst)}
 }
 
-func (m *Meter) Allow() bool {
-	return m.limiter.Allow()
-}
-
-func (m *Meter) RecordBytes(n int64) {
-	if n <= 0 {
-		return
+func (m *Meter) Allow(user string, max int) bool {
+	if max <= 0 {
+		return true
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.bytes += n
+	m.counts[user]++
+	return m.counts[user] <= max
 }
 
-func (m *Meter) Bytes() int64 {
+func (m *Meter) Record(user string, bytesUp, bytesDown int64, duration time.Duration, host string, port int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.bytes
+	m.records[user] = SessionRecord{
+		User:       user,
+		Host:       host,
+		Port:       port,
+		BytesUp:    bytesUp,
+		BytesDown:  bytesDown,
+		DurationMs: duration.Milliseconds(),
+		EndedAt:    time.Now().UTC(),
+	}
+	return nil
 }
