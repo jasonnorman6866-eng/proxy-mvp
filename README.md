@@ -1,24 +1,36 @@
 # proxy-mvp
 
-This repository is the first controlled milestone for a local, allowlisted Gateway v0.1.
+This repository contains the v0.3 milestone: the gateway keeps the same auth/policy/node-safety gates as v0.2, but now adds a controlled relay path to a local operator-owned test environment.
 
-It intentionally proves the authorization and policy gates before enabling a real egress tunnel.
+The relay is intentionally restrictively scoped:
 
-## What this version does
+- one explicit exit node
+- local test target only
+- local egress service required
+- no arbitrary public proxying
+- no peer residential/mobile network
+- no customer billing or dashboard
 
-- `/health` endpoint
-- Basic auth for proxy requests
-- CONNECT-only handling
-- allowlist for `example.com`
-- port restriction to `443`
-- deny unauthorized destinations
-- explicit `501 Not Implemented` while the relay is intentionally disabled
+## Components
 
-## Run locally
+- `cmd/gateway` — authenticated gateway with policy and node checks
+- `cmd/egress` — local operator-controlled relay endpoint on `:9443`
+- `cmd/target` — local echo target on `:9444` for controlled testing
+
+## Local validation
+
+Start the controlled test environment:
+
+```bash
+go run ./cmd/target &
+go run ./cmd/egress &
+```
+
+Then start the gateway:
 
 ```bash
 PROXY_USER=dev \
-PROXY_PASSWORD=test-password \
+PROXY_PASSWORD=secret \
 go run ./cmd/gateway
 ```
 
@@ -28,32 +40,29 @@ Health check:
 curl http://localhost:8080/health
 ```
 
-Authenticated proxy test:
+Test the local controlled relay:
 
 ```bash
 curl \
-  -x http://dev:test-password@localhost:8080 \
-  https://example.com
+  -x http://dev:secret@localhost:8080 \
+  http://localhost:9444
 ```
 
-This should authenticate and authorize the destination, but stop before the actual TCP relay is enabled.
+If the tunnel is working, the body should echo back through the gateway and the local egress path.
 
-Unauthorized destination example:
+## Docker
 
 ```bash
-curl \
-  -x http://dev:test-password@localhost:8080 \
-  https://www.google.com
+docker compose up --build
 ```
 
-This should be rejected.
+## Definition of done
 
-## Why this is the right first checkpoint
+This milestone proves the following sequence:
 
-This keeps the initial build narrow and safe:
-- no arbitrary residential/mobile network
-- no open proxy behavior
-- no real egress routing yet
-- explicit allowlist and deny states
-
-The next checkpoint is an operator-controlled exit-node registry with health + kill switch + relay path.
+- auth passes
+- policy passes
+- node eligibility passes
+- relay to a single controlled local exit node passes
+- byte traffic is observed through the tunnel
+- the relay is still restricted to an explicit, operator-controlled path

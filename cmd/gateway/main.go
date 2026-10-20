@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"proxy-mvp/internal/audit"
@@ -29,16 +30,16 @@ type Gateway struct {
 }
 
 func newGateway() *Gateway {
-	pol := policy.New([]string{"example.com"}, []int{443})
+	pol := policy.New([]string{"example.com", "localhost", "127.0.0.1"}, []int{443, 9444})
 	reg := nodes.NewRegistry([]nodes.ExitNode{
 		{ID: "dev-node-01", Address: "127.0.0.1:9443", Authorized: true, Healthy: true, Disabled: false},
 	})
 	return &Gateway{
 		username: env("PROXY_USER", "dev"),
-		password: env("PROXY_PASSWORD", "change-me"),
+		password: env("PROXY_PASSWORD", "secret"),
 		policy:   pol,
 		registry: reg,
-		limits:   limits.New(1),
+		limits:   limits.New(5),
 		logger:   audit.New(true),
 	}
 }
@@ -77,55 +78,120 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodConnect {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		g.logger.Log(map[string]any{"action": "connection_denied", "reason": "non_connect_request"})
+		g.logger.Log(map[string]any{"action": "connection_denied", "reason": "non_connect_request", "remote_addr": r.RemoteAddr})
 		return
 	}
 
 	host, port, err := net.SplitHostPort(r.Host)
 	if err != nil {
 		http.Error(w, "invalid destination", http.StatusBadRequest)
-		g.logger.Log(map[string]any{"action": "connection_denied", "reason": "invalid_target", "host": r.Host})
+		g.logger.Log(map[string]any{"action": "connection_denied", "reason": "invalid_target", "host": r.Host, "remote_addr": r.RemoteAddr})
 		return
 	}
 
-	if port != "443" {
-		http.Error(w, "destination port denied", http.StatusForbidden)
-		g.logger.Log(map[string]any{"action": "connection_denied", "reason": "destination_port_not_allowed", "host": host, "port": port})
-		return
-	}
-
-	if !g.policy.Allow(strings.ToLower(host), 443) {
+	if !g.policy.Allow(strings.ToLower(host), portToInt(port)) {
 		http.Error(w, "destination not allowed", http.StatusForbidden)
-		g.logger.Log(map[string]any{"action": "connection_denied", "reason": "destination_not_allowed", "host": host, "port": port})
+		g.logger.Log(map[string]any{"action": "connection_denied", "reason": "destination_not_allowed", "host": host, "port": port, "remote_addr": r.RemoteAddr})
 		return
 	}
 
-	userKey := r.RemoteAddr
-	if !g.limits.Allow(userKey) {
+	if !g.limits.Allow(r.RemoteAddr) {
 		http.Error(w, "connection limit exceeded", http.StatusTooManyRequests)
-		g.logger.Log(map[string]any{"action": "connection_denied", "reason": "connection_limit_exceeded", "remote_addr": userKey})
+		g.logger.Log(map[string]any{"action": "connection_denied", "reason": "connection_limit_exceeded", "remote_addr": r.RemoteAddr})
 		return
 	}
 
 	node, err := g.registry.GetAvailable()
 	if err != nil {
 		http.Error(w, "no eligible exit node available", http.StatusServiceUnavailable)
-		g.logger.Log(map[string]any{"action": "connection_denied", "reason": err.Error(), "remote_addr": userKey})
+		g.logger.Log(map[string]any{"action": "connection_denied", "reason": err.Error(), "remote_addr": r.RemoteAddr})
 		return
 	}
 
-	g.logger.Log(map[string]any{
-		"action":     "connection_eligible",
-		"host":       host,
-		"port":       port,
-		"node_id":    node.ID,
-		"node_addr":  node.Address,
-		"remote_addr": userKey,
-	})
+	nodeConn, err := net.DialTimeout("tcp", node.Address, 10*time.Second)
+	if err != nil {
+		log.Printf("connect to exit node %s: %v", node.Address, err)
+		http.Error(w, "exit node unavailable", http.StatusBadGateway)
+		g.logger.Log(map[string]any{"action": "connection_denied", "reason": "exit_node_unreachable", "node_id": node.ID, "remote_addr": r.RemoteAddr})
+		return
+	}
+	defer nodeConn.Close()
 
-	// v0.2 gate: node eligibility passes, but actual relay remains intentionally disabled.
-	http.Error(w, "authorized exit node selected; relay disabled until v0.3", http.StatusNotImplemented)
-	g.logger.Log(map[string]any{"action": "relay_blocked", "host": host, "port": port, "node_id": node.ID, "remote_addr": userKey})
+	if _, err := fmt.Fprintf(nodeConn, "CONNECT %s:%s\r\n", host, port); err != nil {
+		log.Printf("write CONNECT to exit node: %v", err)
+		http.Error(w, "exit node rejected tunnel", http.StatusBadGateway)
+		return
+	}
+
+	buf := make([]byte, 32)
+	if _, err := nodeConn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		log.Printf("set read deadline: %v", err)
+	}
+	if n, err := nodeConn.Read(buf); err != nil || !strings.Contains(string(buf[:n]), "OK") {
+		log.Printf("exit node handshake failed: n=%d err=%v payload=%q", n, err, string(buf[:n]))
+		http.Error(w, "exit node rejected tunnel", http.StatusBadGateway)
+		return
+	}
+	if err := nodeConn.SetReadDeadline(time.Time{}); err != nil {
+		log.Printf("clear read deadline: %v", err)
+	}
+
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "HTTP server does not support hijacking", http.StatusInternalServerError)
+		return
+	}
+	clientConn, _, err := hj.Hijack()
+	if err != nil {
+		log.Printf("hijack: %v", err)
+		http.Error(w, "Could not hijack client connection", http.StatusInternalServerError)
+		return
+	}
+	if _, err := clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
+		_ = clientConn.Close()
+		return
+	}
+
+	g.logger.Log(map[string]any{"action": "tunnel_established", "host": host, "port": port, "node_id": node.ID, "remote_addr": r.RemoteAddr})
+	go relay(clientConn, nodeConn)
+	relay(nodeConn, clientConn)
+}
+
+func relay(dst, src net.Conn) {
+	defer dst.Close()
+	defer src.Close()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, _ = ioCopy(dst, src)
+	}()
+	go func() {
+		defer wg.Done()
+		_, _ = ioCopy(src, dst)
+	}()
+	wg.Wait()
+}
+
+func ioCopy(dst io.Writer, src io.Reader) (int64, error) {
+	buf := make([]byte, 32*1024)
+	var written int64
+	for {
+		n, err := src.Read(buf)
+		if n > 0 {
+			m, werr := dst.Write(buf[:n])
+			written += int64(m)
+			if werr != nil {
+				return written, werr
+			}
+		}
+		if err != nil {
+			if err.Error() == "use of closed network connection" {
+				return written, nil
+			}
+			return written, err
+		}
+	}
 }
 
 func (g *Gateway) authenticate(r *http.Request) bool {
@@ -153,23 +219,17 @@ func (g *Gateway) authenticate(r *http.Request) bool {
 	return userOK == 1 && passOK == 1
 }
 
+func portToInt(port string) int {
+	value, err := strconv.Atoi(port)
+	if err != nil {
+		return -1
+	}
+	return value
+}
+
 func env(name, fallback string) string {
 	if value := os.Getenv(name); value != "" {
 		return value
 	}
 	return fallback
-}
-
-func mustJSON(t *testing.T, data any) string {
-	t.Helper()
-	b, err := json.Marshal(data)
-	if err != nil {
-		t.Fatalf("marshal json: %v", err)
-	}
-	return string(b)
-}
-
-func ExampleGateway() {
-	fmt.Println("gateway v0.2")
-	// Output: gateway v0.2
 }

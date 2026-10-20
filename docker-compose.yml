@@ -1,10 +1,30 @@
 services:
+  target:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["/bin/target"]
+    ports:
+      - "9444:9444"
+
+  egress:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["/bin/egress"]
+    ports:
+      - "9443:9443"
+
   gateway:
     build:
       context: .
       dockerfile: Dockerfile
+    command: ["/bin/gateway"]
     ports:
       - "8080:8080"
     environment:
       PROXY_USER: dev
-      PROXY_PASSWORD: test-password
+      PROXY_PASSWORD: secret
+    depends_on:
+      - egress
+      - target
