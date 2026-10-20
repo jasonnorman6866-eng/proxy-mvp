@@ -20,10 +20,7 @@ func (l *Logger) Log(event string, fields map[string]any) {
 	if !l.enabled {
 		return
 	}
-	payload := map[string]any{
-		"ts":    time.Now().UTC().Format(time.RFC3339),
-		"event": event,
-	}
+	payload := map[string]any{"ts": time.Now().UTC().Format(time.RFC3339), "event": event}
 	for k, v := range fields {
 		payload[k] = v
 	}
@@ -33,5 +30,5 @@ func (l *Logger) Log(event string, fields map[string]any) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	log.Printf("%s", b)
+	log.Printf("%s", string(b))
 }

@@ -20,7 +20,7 @@ policy:
     - 80
 
 meter:
-  limit_per_minute: 60
+  rate_limit_per_minute: 60
   burst: 30
 
 audit:

@@ -7,22 +7,19 @@ import (
 )
 
 type Meter struct {
-	mu         sync.Mutex
-	bytes      int64
-	sessions   int64
-	limiter    *rate.Limiter
+	mu      sync.Mutex
+	bytes   int64
+	limiter *rate.Limiter
 }
 
-func New(limitPerMinute, burst int) *Meter {
-	if limitPerMinute <= 0 {
-		limitPerMinute = 60
+func New(rateLimitPerMinute, burst int) *Meter {
+	if rateLimitPerMinute <= 0 {
+		rateLimitPerMinute = 60
 	}
 	if burst <= 0 {
 		burst = 30
 	}
-	return &Meter{
-		limiter: rate.NewLimiter(rate.Limit(limitPerMinute/60.0), burst),
-	}
+	return &Meter{limiter: rate.NewLimiter(rate.Limit(rateLimitPerMinute/60.0), burst)}
 }
 
 func (m *Meter) Allow() bool {
@@ -36,14 +33,10 @@ func (m *Meter) RecordBytes(n int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.bytes += n
-	m.sessions++
 }
 
-func (m *Meter) Snapshot() map[string]any {
+func (m *Meter) Bytes() int64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return map[string]any{
-		"bytes_transferred": m.bytes,
-		"sessions_count":    m.sessions,
-	}
+	return m.bytes
 }

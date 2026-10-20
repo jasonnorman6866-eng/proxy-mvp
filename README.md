@@ -2,37 +2,16 @@
 
 This repository is the first small, controlled gateway proof of concept for a legitimate single-node egress path.
 
-It intentionally does not include residential SDK networks, billing, dashboards, or carrier rotation.
+The design is intentionally narrow:
 
-## Scope
-
-The MVP proves this path:
-
-```text
-Client
-  ↓
-Go Gateway :8080
-  ↓
-Authentication
-  ↓
-Policy check
-  ↓
-Authorized exit node
-  ↓
-Public destination
-```
-
-## Included
-
-- HTTP CONNECT proxying
-- Basic authentication
-- Restrictive destination and port policy
-- One configured exit node
-- Rate limiting
-- Bandwidth tracking
-- Audit logging without payload capture
-- /health endpoint
-- kill switch flag
+- one configured exit node
+- basic authentication
+- CONNECT tunneling
+- restrictive policy
+- rate limiting
+- usage accounting
+- audit logs without payload capture
+- health endpoint and kill switch
 
 ## Project structure
 
@@ -63,28 +42,26 @@ proxy-mvp/
 go run ./cmd/gateway
 ```
 
-Then test with:
+Then verify:
 
 ```bash
 curl --proxy-user demo:demo -x http://localhost:8080 https://example.com -I
 ```
 
-Check health:
+Health check:
 
 ```bash
 curl http://localhost:8080/health
 ```
 
-## Docker
+## Containerized
 
 ```bash
 docker compose up --build
 ```
 
-## Governance notes
+## Governance note
 
-This gateway assumes a single known, authorized egress point and a strict allow list. It does not impersonate carriers, rotate IPs, or rely on arbitrary residential traffic.
+This is the first controlled primitive: a gateway with a single authorized egress path, explicit deny/allow boundaries, and logging that tracks metadata and bytes transferred without encoding or capturing payload contents.
 
-## Definition of done
-
-This repo proves the minimal foundation required before expanding into PostgreSQL, node registry, and routing.
+It does not include residential SDK networks, carrier rotation, billing, or customer dashboards.

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 
@@ -16,21 +15,10 @@ func main() {
 	}
 
 	handler := proxy.New(cfg)
-	mux := http.NewServeMux()
-	mux.HandleFunc(cfg.Gateway.HealthPath, func(w http.ResponseWriter, r *http.Request) {
-		handler.ServeHTTP(w, r)
-	})
-	mux.Handle("/", handler)
-
-	server := &http.Server{
-		Addr:    cfg.Gateway.Listen,
-		Handler: mux,
-	}
-
 	log.Printf("gateway listening on %s", cfg.Gateway.Listen)
 	log.Printf("exit node: %s:%d authorized=%t healthy=%t kill_switch=%t", cfg.ExitNode.Host, cfg.ExitNode.Port, cfg.ExitNode.Authorized, cfg.ExitNode.Healthy, cfg.ExitNode.KillSwitch)
 
-	if err := server.ListenAndServe(); err != nil {
-		fmt.Println(err)
+	if err := http.ListenAndServe(cfg.Gateway.Listen, handler); err != nil {
+		log.Fatalf("serve gateway: %v", err)
 	}
 }
